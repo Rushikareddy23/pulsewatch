@@ -1,0 +1,3 @@
+alert_email = "you@example.com"
+github_repo = "Rushikareddy23/pulsewatch"
+region      = "us-east-1"

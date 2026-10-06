@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/test.db
+node_modules/
+web/dist/
+.terraform/
+*.tfstate*
+terraform.tfvars
+.env
+.venv/
+*.db

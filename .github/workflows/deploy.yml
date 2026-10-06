@@ -1,0 +1,66 @@
+name: Deploy
+# Runs only after CI succeeds on main, and deploys EXACTLY the commit CI tested.
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC: short-lived AWS credentials, no stored keys
+  contents: read
+
+concurrency: { group: deploy-production, cancel-in-progress: false }
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image tagged with the commit SHA (immutable)
+        run: |
+          IMAGE=${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${SHA}
+          if aws ecr describe-images --repository-name ${{ vars.ECR_REPOSITORY }} --image-ids imageTag=${SHA} >/dev/null 2>&1; then
+            echo "Image for ${SHA} already exists"
+          else
+            docker build -t $IMAGE backend && docker push $IMAGE
+          fi
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Register task definitions pinned to this image and roll out
+        run: |
+          for svc in api worker; do
+            family=${{ vars.ECS_CLUSTER }}-$svc
+            aws ecs describe-task-definition --task-definition $family --query taskDefinition > td.json
+            jq --arg img "$IMAGE" '.containerDefinitions |= map(.image = $img)
+              | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+              td.json > td-new.json
+            arn=$(aws ecs register-task-definition --cli-input-json file://td-new.json --query taskDefinition.taskDefinitionArn --output text)
+            aws ecs update-service --cluster ${{ vars.ECS_CLUSTER }} --service $svc --task-definition $arn > /dev/null
+            echo "$svc -> $arn"
+          done
+          aws ecs wait services-stable --cluster ${{ vars.ECS_CLUSTER }} --services api worker
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - name: Build and upload frontend (same commit)
+        working-directory: web
+        run: |
+          npm ci && npm run build
+          aws s3 sync dist s3://${{ vars.WEB_BUCKET }} --delete \
+            --cache-control "public,max-age=31536000,immutable" --exclude index.html
+          aws s3 cp dist/index.html s3://${{ vars.WEB_BUCKET }}/index.html --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id ${{ vars.CLOUDFRONT_ID }} --paths "/index.html"

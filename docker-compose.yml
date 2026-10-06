@@ -1,0 +1,41 @@
+# Full stack locally: http://localhost:8080
+services:
+  db:
+    image: postgres:16-alpine
+    environment: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: pulsewatch }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 3s, retries: 20 }
+  api:
+    build: ./backend
+    environment: &env
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/pulsewatch
+      JWT_SECRET: local-dev-secret-change-me-32-bytes-min
+      CORS_ORIGINS: http://localhost:8080
+      NOTIFIER: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+    depends_on: { db: { condition: service_healthy } }
+    ports: ["8000:8000"]
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment: *env
+    depends_on: [api]
+    restart: unless-stopped   # retries until the API has run migrations
+    deploy: { replicas: 2 }   # two workers share the load safely (SKIP LOCKED)
+  notifier:   # sends alert emails; separate so slow SMTP never delays checks
+    build: ./backend
+    command: python -m app.notify_worker
+    environment: *env
+    depends_on: [api]
+    restart: unless-stopped
+  web:
+    build: ./web
+    ports: ["8080:80"]
+    depends_on: [api]
+  mailpit:   # catches alert emails locally: http://localhost:8025
+    image: axllent/mailpit:latest
+    ports: ["8025:8025"]
+volumes:
+  pgdata:
