@@ -10,7 +10,7 @@ CloudWatch) · Terraform · GitHub Actions (CI + OIDC deploys)
 
 ![Dashboard](docs/dashboard.png)
 ![Monitor detail](docs/monitor-detail.png)
-<sub>Screenshots use sample history from `scripts/seed_demo.py`. Live demo: _add your CloudFront URL_</sub>
+<sub>Screenshots use sample history from `scripts/seed_demo.py`.</sub>
 
 ## Architecture
 
@@ -63,9 +63,9 @@ chosen trade-off over a lost one.
 
 | Metric | Value | How measured |
 |---|---|---|
-| Worker throughput | _run `make bench`_ checks/sec, 0 duplicate checks | `scripts/bench_worker.py`: 2,000 monitors, 4 workers, local test server with 20–80 ms latency and 5% errors |
+| Worker throughput | **162–181 checks/sec, 0 duplicate checks** in each of 3 runs (2,000 checks per run, ~11–12 s) | `make bench` → `scripts/bench_worker.py`: 2,000 monitors, 4 workers, local test server with 20–80 ms latency and 5% errors. Measured 2026-10-08 at commit `4017245`, 2 vCPUs, PostgreSQL 16 |
 | Tests | 58 backend (PostgreSQL) + 11 frontend + 4 infra | `make test`, run in CI on every push |
-| Deploy time | _from GitHub Actions_ | push to `main` → live |
+| Deployment | AWS infrastructure (ECS Fargate, RDS, CloudFront) and the deploy workflow are defined; not yet applied to a live AWS account | `infra/terraform/`, `.github/workflows/deploy.yml` |
 
 ## Run locally
 
